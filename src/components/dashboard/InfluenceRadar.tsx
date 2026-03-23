@@ -91,6 +91,12 @@ const pointFromPolar = (angleDeg: number, radius: number) => {
   return { x: 50 + Math.cos(r) * radius, y: 50 + Math.sin(r) * radius };
 };
 
+const distance = (a: GraphNode, b: GraphNode): number => {
+  const dx = a.x - b.x;
+  const dy = a.y - b.y;
+  return Math.sqrt(dx * dx + dy * dy);
+};
+
 const spread = (count: number, start: number, end: number): number[] => {
   if (count <= 0) return [];
   if (count === 1) return [(start + end) / 2];
@@ -190,37 +196,51 @@ const buildNodes = (rawNodes: RadarNode[], posts: SocialPost[]): GraphNode[] => 
   });
 };
 
-const densifyNodes = (baseNodes: GraphNode[], immersive: boolean): GraphNode[] => {
-  if (!immersive || baseNodes.length === 0) return baseNodes;
+const densifyNodes = (baseNodes: GraphNode[], variant: "compact" | "immersive"): GraphNode[] => {
+  if (baseNodes.length === 0) return baseNodes;
+
+  const immersive = variant === "immersive";
 
   const augmented: GraphNode[] = [...baseNodes];
   let nextId = Math.max(...baseNodes.map((n) => n.id)) + 1;
 
-  const childCountByGroup: Record<GraphNode["group"], number> = {
-    core: 2,
-    support: 2,
-    risk: 1,
-  };
+  const childCountByGroup: Record<GraphNode["group"], number> = immersive
+    ? {
+        core: 4,
+        support: 3,
+        risk: 2,
+      }
+    : {
+        core: 2,
+        support: 1,
+        risk: 1,
+      };
 
-  for (const node of baseNodes) {
-    if (node.id === baseNodes[0].id) continue;
+  const maxPrimary = immersive ? 18 : 10;
+  const primaryNodes = baseNodes.slice(1, maxPrimary + 1);
 
-    const childCount = childCountByGroup[node.group];
+  for (const node of primaryNodes) {
+    const groupBaseCount = childCountByGroup[node.group];
+    const influenceBonus = node.influence > 75 ? 1 : 0;
+    const childCount = Math.min(5, groupBaseCount + influenceBonus);
+
     for (let i = 0; i < childCount; i += 1) {
-      const angle = ((node.id * 41 + i * 67) % 360) * (Math.PI / 180);
-      const radius = node.group === "risk" ? 4.8 + i * 1.1 : 3.8 + i * 1.35;
+      const baseAngle = (node.id * 41 + i * 67) % 360;
+      const angleJitter = (i % 2 === 0 ? 1 : -1) * (immersive ? 12 : 8);
+      const angle = (baseAngle + angleJitter) * (Math.PI / 180);
+      const radius = node.group === "risk" ? 4.8 + i * 1.2 : 3.6 + i * (immersive ? 1.3 : 1.05);
       const x = Math.max(6, Math.min(94, node.x + Math.cos(angle) * radius));
       const y = Math.max(6, Math.min(94, node.y + Math.sin(angle) * radius));
       const trust = Math.max(8, Math.min(95, (node.trust_score || 0) - (node.group === "risk" ? 5 : -2) - i * 2));
-      const influence = Math.max(12, Math.min(88, node.influence - 6 - i * 4));
+      const influence = Math.max(10, Math.min(88, node.influence - 6 - i * 4));
 
       augmented.push({
         ...node,
         id: nextId,
         handle: `${node.handle}_n${i + 1}`,
         name: `${node.name || node.handle} Node ${i + 1}`,
-        followers: Math.max(5000, Math.round((node.followers || 50000) * (0.24 - i * 0.06))),
-        posts_24h: Math.max(3, Math.round((node.posts_24h || 20) * (0.45 - i * 0.09))),
+        followers: Math.max(5000, Math.round((node.followers || 50000) * (0.26 - i * 0.05))),
+        posts_24h: Math.max(3, Math.round((node.posts_24h || 20) * (0.52 - i * 0.09))),
         trust_score: trust,
         quality_score: influence,
         impact_score: influence,
@@ -228,7 +248,7 @@ const densifyNodes = (baseNodes: GraphNode[], immersive: boolean): GraphNode[] =
         trustBand: trustBand(trust),
         x,
         y,
-        size: Math.max(10, Math.round(node.size * (0.56 - i * 0.08))),
+        size: Math.max(9, Math.round(node.size * (0.58 - i * 0.07))),
         samplePost: `Amplified from @${node.handle}: ${node.samplePost}`,
         synthetic: true,
         parentId: node.id,
@@ -236,7 +256,7 @@ const densifyNodes = (baseNodes: GraphNode[], immersive: boolean): GraphNode[] =
 
       nextId += 1;
     }
-  }
+  };
 
   return augmented;
 };
@@ -298,7 +318,20 @@ const buildEdges = (nodes: GraphNode[]): GraphEdge[] => {
     });
   }
 
-  return [...centerEdges, ...intraGroupEdges, ...childEdges, ...relayEdges];
+  const bridgeEdges: GraphEdge[] = [];
+  for (const node of primary) {
+    const candidates = primary.filter((item) => item.id !== node.id && item.group !== node.group);
+    if (candidates.length === 0) continue;
+    const nearest = candidates.sort((a, b) => distance(node, a) - distance(node, b))[0];
+    bridgeEdges.push({
+      from: node.id,
+      to: nearest.id,
+      strength: 0.16,
+      risk: node.group === "risk" || nearest.group === "risk",
+    });
+  }
+
+  return [...centerEdges, ...intraGroupEdges, ...childEdges, ...relayEdges, ...bridgeEdges];
 };
 
 const InfluenceRadar = ({ variant = "compact" }: InfluenceRadarProps) => {
@@ -352,8 +385,8 @@ const InfluenceRadar = ({ variant = "compact" }: InfluenceRadarProps) => {
 
   const graphNodes = useMemo(() => {
     const primary = buildNodes(nodes, posts);
-    return densifyNodes(primary, immersive);
-  }, [nodes, posts, immersive]);
+    return densifyNodes(primary, variant);
+  }, [nodes, posts, variant]);
 
   const filteredNodes = useMemo(() => {
     return graphNodes.filter((node) => {
@@ -497,30 +530,35 @@ const InfluenceRadar = ({ variant = "compact" }: InfluenceRadarProps) => {
                 if (!from || !to) return null;
                 const active = hoveredId === edge.from || hoveredId === edge.to || selected?.id === edge.from || selected?.id === edge.to;
                 const stroke = edge.risk ? COLORS.risk : COLORS.cyan;
+                const cx = (from.x + to.x) / 2;
+                const cy = (from.y + to.y) / 2;
+                const dx = to.x - from.x;
+                const dy = to.y - from.y;
+                const length = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+                const curve = Math.min(2.8, length * (edge.strength > 0.5 ? 0.08 : 0.05));
+                const ox = (-dy / length) * curve;
+                const oy = (dx / length) * curve;
+                const path = `M ${from.x} ${from.y} Q ${cx + ox} ${cy + oy} ${to.x} ${to.y}`;
 
                 return (
                   <g key={`${edge.from}-${edge.to}-${idx}`}>
-                    <line
-                      x1={from.x}
-                      y1={from.y}
-                      x2={to.x}
-                      y2={to.y}
+                    <path
+                      d={path}
+                      fill="none"
                       stroke={stroke}
                       strokeWidth={0.1 + edge.strength * (active ? 0.92 : 0.62)}
                       strokeOpacity={active ? 0.9 : 0.25}
                     />
-                    <line
-                      x1={from.x}
-                      y1={from.y}
-                      x2={to.x}
-                      y2={to.y}
+                    <path
+                      d={path}
+                      fill="none"
                       stroke={stroke}
                       strokeWidth="0.14"
                       strokeDasharray="1.3 2"
                       strokeOpacity={active ? 0.72 : 0.3}
                     >
                       <animate attributeName="stroke-dashoffset" from="14" to="0" dur="1.8s" repeatCount="indefinite" />
-                    </line>
+                    </path>
                   </g>
                 );
               })}

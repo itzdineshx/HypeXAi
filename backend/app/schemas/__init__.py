@@ -16,6 +16,12 @@ from app.schemas.dashboard import (
     TrendPointOut,
 )
 from app.schemas.social import SocialFetchRequest, SocialFetchResponse, SocialPostOut
+from app.schemas.playground import (
+    PlaygroundSimulationRequest,
+    PlaygroundSimulationResponse,
+    PlaygroundSimulationPoint,
+    PlaygroundSourceShare,
+)
 
 __all__ = [
     "APIMessage",
@@ -37,4 +43,8 @@ __all__ = [
     "SocialFetchRequest",
     "SocialFetchResponse",
     "SocialPostOut",
+    "PlaygroundSimulationRequest",
+    "PlaygroundSimulationResponse",
+    "PlaygroundSimulationPoint",
+    "PlaygroundSourceShare",
 ]
