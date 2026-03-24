@@ -1,9 +1,10 @@
 import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
 from pydantic import field_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -11,12 +12,12 @@ class Settings(BaseSettings):
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
     database_url: str = "sqlite:///./hype_navigator.db"
-    cors_origins: list[str] = ["http://localhost:8080", "http://127.0.0.1:8080"]
+    cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:8080", "http://127.0.0.1:8080"]
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
     reddit_user_agent: str = "HypeNavigator/1.0"
-    reddit_subreddits: list[str] = ["CryptoCurrency", "CryptoMarkets", "SatoshiStreetBets", "memecoins"]
-    twitter_queries: list[str] = ["(doge OR pepe OR shib OR bonk OR wif) lang:en"]
+    reddit_subreddits: Annotated[list[str], NoDecode] = ["CryptoCurrency", "CryptoMarkets", "SatoshiStreetBets", "memecoins"]
+    twitter_queries: Annotated[list[str], NoDecode] = ["(doge OR pepe OR shib OR bonk OR wif) lang:en"]
     social_default_reddit_limit: int = 60
     social_default_twitter_limit: int = 120
     twitter_accounts_db: str = "./twscrape_accounts.db"
