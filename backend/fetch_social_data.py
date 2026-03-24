@@ -27,21 +27,18 @@ def _print_result(result: dict[str, Any]) -> None:
 async def _run(args: argparse.Namespace) -> None:
     settings = get_settings()
     db = SessionLocal()
-    try:
-        payload = SocialFetchRequest(
-            include_twitter=not args.no_twitter,
-            include_reddit=not args.no_reddit,
-            twitter_limit=args.twitter_limit,
-            reddit_limit=args.reddit_limit,
-            store_in_db=not args.no_db,
-            export_csv=not args.no_csv,
-            twitter_queries=args.twitter_queries,
-            reddit_subreddits=args.reddit_subreddits,
-        )
-        result = await fetch_and_store_social_data(db=db, settings=settings, payload=payload)
-        _print_result(result.response.model_dump())
-    finally:
-        db.close()
+    payload = SocialFetchRequest(
+        include_twitter=not args.no_twitter,
+        include_reddit=not args.no_reddit,
+        twitter_limit=args.twitter_limit,
+        reddit_limit=args.reddit_limit,
+        store_in_db=not args.no_db,
+        export_csv=not args.no_csv,
+        twitter_queries=args.twitter_queries,
+        reddit_subreddits=args.reddit_subreddits,
+    )
+    result = await fetch_and_store_social_data(db=db, settings=settings, payload=payload)
+    _print_result(result.response.model_dump())
 
 
 def parse_args() -> argparse.Namespace:

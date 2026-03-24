@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from pymongo import DESCENDING
+from pymongo.database import Database
 
 from app.db.session import get_db
-from app.models.entities import ReplayEvent
 from app.schemas import ReplayEventOut
 
 router = APIRouter()
@@ -12,9 +12,10 @@ router = APIRouter()
 def get_replay_events(
     symbol: str | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=300),
-    db: Session = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> list[ReplayEventOut]:
-    query = db.query(ReplayEvent)
+    query: dict[str, str] = {}
     if symbol:
-        query = query.filter(ReplayEvent.coin_symbol == symbol.upper())
-    return query.order_by(ReplayEvent.occurred_at.desc()).limit(limit).all()
+        query["coin_symbol"] = symbol.upper()
+    docs = list(db["replay_events"].find(query, {"_id": 0}).sort("occurred_at", DESCENDING).limit(limit))
+    return [ReplayEventOut(**doc) for doc in docs]

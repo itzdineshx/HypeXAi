@@ -1,21 +1,37 @@
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func
-from sqlalchemy.orm import Session
+from pymongo import DESCENDING
+from pymongo.database import Database
 
 from app.db.session import get_db
-from app.models.entities import Alert, Coin, TrendPoint
 from app.schemas import CoinOut, DashboardSummary, TrendPointOut
 
 router = APIRouter()
 
 
 @router.get("/summary", response_model=DashboardSummary)
-def get_dashboard_summary(db: Session = Depends(get_db)) -> DashboardSummary:
-    tracked_coins = db.query(Coin).count()
-    average_hype_score = db.query(func.avg(Coin.hype_score)).scalar() or 0
-    average_trust_score = db.query(func.avg(Coin.trust_score)).scalar() or 0
-    active_alerts = db.query(Alert).filter(Alert.status.in_(["active", "investigating"])).count()
-    market_sentiment = db.query(func.avg(Coin.sentiment_score)).scalar() or 0
+def get_dashboard_summary(db: Database = Depends(get_db)) -> DashboardSummary:
+    tracked_coins = db["coins"].count_documents({})
+
+    coin_aggregate = list(
+        db["coins"].aggregate(
+            [
+                {
+                    "$group": {
+                        "_id": None,
+                        "average_hype_score": {"$avg": "$hype_score"},
+                        "average_trust_score": {"$avg": "$trust_score"},
+                        "market_sentiment": {"$avg": "$sentiment_score"},
+                    }
+                }
+            ]
+        )
+    )
+    coin_stats = coin_aggregate[0] if coin_aggregate else {}
+    average_hype_score = float(coin_stats.get("average_hype_score", 0.0) or 0.0)
+    average_trust_score = float(coin_stats.get("average_trust_score", 0.0) or 0.0)
+    market_sentiment = float(coin_stats.get("market_sentiment", 0.0) or 0.0)
+
+    active_alerts = db["alerts"].count_documents({"status": {"$in": ["active", "investigating"]}})
 
     return DashboardSummary(
         tracked_coins=tracked_coins,
@@ -27,17 +43,19 @@ def get_dashboard_summary(db: Session = Depends(get_db)) -> DashboardSummary:
 
 
 @router.get("/trending", response_model=list[CoinOut])
-def get_trending_coins(limit: int = Query(default=10, ge=1, le=100), db: Session = Depends(get_db)) -> list[CoinOut]:
-    return db.query(Coin).order_by(Coin.hype_score.desc(), Coin.change_24h.desc()).limit(limit).all()
+def get_trending_coins(limit: int = Query(default=10, ge=1, le=100), db: Database = Depends(get_db)) -> list[CoinOut]:
+    docs = list(db["coins"].find({}, {"_id": 0}).sort([("hype_score", DESCENDING), ("change_24h", DESCENDING)]).limit(limit))
+    return [CoinOut(**doc) for doc in docs]
 
 
 @router.get("/trend-chart", response_model=list[TrendPointOut])
 def get_trend_chart(
     symbol: str | None = Query(default=None),
     limit: int = Query(default=40, ge=1, le=500),
-    db: Session = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> list[TrendPointOut]:
-    query = db.query(TrendPoint)
+    query: dict[str, str] = {}
     if symbol:
-        query = query.filter(TrendPoint.coin_symbol == symbol.upper())
-    return query.order_by(TrendPoint.ts.desc()).limit(limit).all()
+        query["coin_symbol"] = symbol.upper()
+    docs = list(db["trend_points"].find(query, {"_id": 0}).sort("ts", DESCENDING).limit(limit))
+    return [TrendPointOut(**doc) for doc in docs]

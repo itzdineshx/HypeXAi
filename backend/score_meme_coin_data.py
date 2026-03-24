@@ -4,10 +4,7 @@ from app.services.meme_dataset_scoring import score_meme_coin_dataset
 
 if __name__ == "__main__":
     db = SessionLocal()
-    try:
-        result = score_meme_coin_dataset(db=db)
-    finally:
-        db.close()
+    result = score_meme_coin_dataset(db=db)
 
     print("\nMeme Coin Scoring Result")
     print("-" * 40)

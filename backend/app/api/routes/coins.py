@@ -1,10 +1,10 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from pymongo import DESCENDING
+from pymongo.database import Database
 
 from app.db.session import get_db
-from app.models.entities import Alert, Coin, Influencer
 from app.schemas import AlertOut, CoinDetailOut, CoinOut, CoinRealtimeOut, DexPairOut, DexTokenProfileOut, InfluencerOut
 from app.services.dexscreener import fetch_realtime_coin_snapshot, market_mood_emoji
 
@@ -16,47 +16,48 @@ def list_coins(
     search: str | None = Query(default=None),
     min_hype_score: int | None = Query(default=None, ge=0, le=100),
     limit: int = Query(default=50, ge=1, le=200),
-    db: Session = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> list[CoinOut]:
-    query = db.query(Coin)
+    query: dict[str, object] = {}
     if search:
-        pattern = f"%{search.upper()}%"
-        query = query.filter(Coin.symbol.like(pattern) | Coin.name.like(f"%{search}%"))
+        escaped = search.strip()
+        query["$or"] = [{"symbol": {"$regex": escaped, "$options": "i"}}, {"name": {"$regex": escaped, "$options": "i"}}]
     if min_hype_score is not None:
-        query = query.filter(Coin.hype_score >= min_hype_score)
-    return query.order_by(Coin.hype_score.desc()).limit(limit).all()
+        query["hype_score"] = {"$gte": min_hype_score}
+    docs = list(db["coins"].find(query, {"_id": 0}).sort("hype_score", DESCENDING).limit(limit))
+    return [CoinOut(**doc) for doc in docs]
 
 
 @router.get("/{symbol}", response_model=CoinDetailOut)
-def get_coin(symbol: str, db: Session = Depends(get_db)) -> CoinDetailOut:
-    coin = db.query(Coin).filter(Coin.symbol == symbol.upper()).first()
+def get_coin(symbol: str, db: Database = Depends(get_db)) -> CoinDetailOut:
+    coin = db["coins"].find_one({"symbol": symbol.upper()}, {"_id": 0})
     if not coin:
         raise HTTPException(status_code=404, detail=f"Coin '{symbol}' not found")
 
-    snapshot = fetch_realtime_coin_snapshot(symbol=coin.symbol)
+    snapshot = fetch_realtime_coin_snapshot(symbol=str(coin["symbol"]))
     pair_payload = snapshot.get("dex_pair")
     profile_payload = snapshot.get("dex_profile")
     dex_pair = DexPairOut(**pair_payload) if pair_payload else None
     dex_profile = DexTokenProfileOut(**profile_payload) if profile_payload else None
 
     price_change = (
-        dex_pair.price_change_h24 if dex_pair and dex_pair.price_change_h24 is not None else coin.change_24h
+        dex_pair.price_change_h24 if dex_pair and dex_pair.price_change_h24 is not None else float(coin["change_24h"])
     )
-    mood_emoji = market_mood_emoji(price_change, coin.trust_score, coin.hype_score)
+    mood_emoji = market_mood_emoji(price_change, int(coin["trust_score"]), int(coin["hype_score"]))
 
     return CoinDetailOut(
-        symbol=coin.symbol,
-        name=coin.name,
-        price=dex_pair.price_usd if dex_pair and dex_pair.price_usd is not None else coin.price,
-        market_cap=dex_pair.market_cap if dex_pair and dex_pair.market_cap is not None else coin.market_cap,
-        volume_24h=dex_pair.volume_h24 if dex_pair and dex_pair.volume_h24 is not None else coin.volume_24h,
+        symbol=str(coin["symbol"]),
+        name=str(coin["name"]),
+        price=dex_pair.price_usd if dex_pair and dex_pair.price_usd is not None else float(coin["price"]),
+        market_cap=dex_pair.market_cap if dex_pair and dex_pair.market_cap is not None else float(coin["market_cap"]),
+        volume_24h=dex_pair.volume_h24 if dex_pair and dex_pair.volume_h24 is not None else float(coin["volume_24h"]),
         change_24h=price_change,
-        hype_score=coin.hype_score,
-        trust_score=coin.trust_score,
-        sentiment_score=coin.sentiment_score,
-        prediction=coin.prediction,
-        prediction_confidence=coin.prediction_confidence,
-        risk_level=coin.risk_level,
+        hype_score=int(coin["hype_score"]),
+        trust_score=int(coin["trust_score"]),
+        sentiment_score=int(coin["sentiment_score"]),
+        prediction=str(coin["prediction"]),
+        prediction_confidence=int(coin["prediction_confidence"]),
+        risk_level=str(coin["risk_level"]),
         dex_pair=dex_pair,
         dex_profile=dex_profile,
         emoji=snapshot.get("emoji") or "\U0001FA99",
@@ -67,12 +68,12 @@ def get_coin(symbol: str, db: Session = Depends(get_db)) -> CoinDetailOut:
 
 
 @router.get("/{symbol}/realtime", response_model=CoinRealtimeOut)
-def get_coin_realtime(symbol: str, db: Session = Depends(get_db)) -> CoinRealtimeOut:
-    coin = db.query(Coin).filter(Coin.symbol == symbol.upper()).first()
+def get_coin_realtime(symbol: str, db: Database = Depends(get_db)) -> CoinRealtimeOut:
+    coin = db["coins"].find_one({"symbol": symbol.upper()}, {"_id": 0})
     if not coin:
         raise HTTPException(status_code=404, detail=f"Coin '{symbol}' not found")
 
-    snapshot = fetch_realtime_coin_snapshot(symbol=coin.symbol)
+    snapshot = fetch_realtime_coin_snapshot(symbol=str(coin["symbol"]))
     pair_payload = snapshot.get("dex_pair")
     profile_payload = snapshot.get("dex_profile")
     top_pairs_payload = snapshot.get("top_pairs") or []
@@ -82,23 +83,23 @@ def get_coin_realtime(symbol: str, db: Session = Depends(get_db)) -> CoinRealtim
     top_pairs = [DexPairOut(**pair) for pair in top_pairs_payload]
 
     price_change = (
-        dex_pair.price_change_h24 if dex_pair and dex_pair.price_change_h24 is not None else coin.change_24h
+        dex_pair.price_change_h24 if dex_pair and dex_pair.price_change_h24 is not None else float(coin["change_24h"])
     )
-    mood_emoji = market_mood_emoji(price_change, coin.trust_score, coin.hype_score)
+    mood_emoji = market_mood_emoji(price_change, int(coin["trust_score"]), int(coin["hype_score"]))
 
     return CoinRealtimeOut(
-        symbol=coin.symbol,
-        name=coin.name,
-        price=dex_pair.price_usd if dex_pair and dex_pair.price_usd is not None else coin.price,
-        market_cap=dex_pair.market_cap if dex_pair and dex_pair.market_cap is not None else coin.market_cap,
-        volume_24h=dex_pair.volume_h24 if dex_pair and dex_pair.volume_h24 is not None else coin.volume_24h,
+        symbol=str(coin["symbol"]),
+        name=str(coin["name"]),
+        price=dex_pair.price_usd if dex_pair and dex_pair.price_usd is not None else float(coin["price"]),
+        market_cap=dex_pair.market_cap if dex_pair and dex_pair.market_cap is not None else float(coin["market_cap"]),
+        volume_24h=dex_pair.volume_h24 if dex_pair and dex_pair.volume_h24 is not None else float(coin["volume_24h"]),
         change_24h=price_change,
-        hype_score=coin.hype_score,
-        trust_score=coin.trust_score,
-        sentiment_score=coin.sentiment_score,
-        prediction=coin.prediction,
-        prediction_confidence=coin.prediction_confidence,
-        risk_level=coin.risk_level,
+        hype_score=int(coin["hype_score"]),
+        trust_score=int(coin["trust_score"]),
+        sentiment_score=int(coin["sentiment_score"]),
+        prediction=str(coin["prediction"]),
+        prediction_confidence=int(coin["prediction_confidence"]),
+        risk_level=str(coin["risk_level"]),
         dex_pair=dex_pair,
         dex_profile=dex_profile,
         top_pairs=top_pairs,
@@ -113,21 +114,22 @@ def get_coin_realtime(symbol: str, db: Session = Depends(get_db)) -> CoinRealtim
 def get_coin_alerts(
     symbol: str,
     limit: int = Query(default=20, ge=1, le=100),
-    db: Session = Depends(get_db),
+    db: Database = Depends(get_db),
 ) -> list[AlertOut]:
-    return (
-        db.query(Alert)
-        .filter(Alert.coin_symbol == symbol.upper())
-        .order_by(Alert.created_at.desc())
+    docs = list(
+        db["alerts"]
+        .find({"coin_symbol": symbol.upper()}, {"_id": 0})
+        .sort("created_at", DESCENDING)
         .limit(limit)
-        .all()
     )
+    return [AlertOut(**doc) for doc in docs]
 
 
 @router.get("/{symbol}/influencers", response_model=list[InfluencerOut])
-def get_coin_influencers(symbol: str, db: Session = Depends(get_db)) -> list[InfluencerOut]:
+def get_coin_influencers(symbol: str, db: Database = Depends(get_db)) -> list[InfluencerOut]:
     # Temporary signal: return top influencers for tracked symbols.
-    coin_exists = db.query(Coin.id).filter(Coin.symbol == symbol.upper()).first()
+    coin_exists = db["coins"].find_one({"symbol": symbol.upper()}, {"symbol": 1})
     if not coin_exists:
         raise HTTPException(status_code=404, detail=f"Coin '{symbol}' not found")
-    return db.query(Influencer).order_by(Influencer.impact_score.desc()).limit(10).all()
+    docs = list(db["influencers"].find({}, {"_id": 0}).sort("impact_score", DESCENDING).limit(10))
+    return [InfluencerOut(**doc) for doc in docs]

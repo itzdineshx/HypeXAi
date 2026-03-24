@@ -6,12 +6,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import and_
-from sqlalchemy.orm import Session
+from pymongo import DESCENDING, UpdateOne
+from pymongo.database import Database
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from app.core.config import Settings
-from app.models.entities import Coin, SocialPost
 from app.schemas.social import SocialFetchRequest, SocialFetchResponse
 
 
@@ -183,44 +182,24 @@ def _fetch_reddit_posts(
     return posts, warnings
 
 
-def _upsert_social_posts(db: Session, posts: list[dict[str, Any]]) -> tuple[int, int]:
+def _upsert_social_posts(db: Database, posts: list[dict[str, Any]]) -> tuple[int, int]:
     inserted = 0
     updated = 0
 
     if not posts:
         return inserted, updated
 
-    by_source: dict[str, list[dict[str, Any]]] = {}
-    for post in posts:
-        by_source.setdefault(str(post["source"]), []).append(post)
-
-    for source, source_posts in by_source.items():
-        post_ids = [str(item["post_id"]) for item in source_posts]
-        existing_rows = (
-            db.query(SocialPost)
-            .filter(and_(SocialPost.source == source, SocialPost.post_id.in_(post_ids)))
-            .all()
+    operations = [
+        UpdateOne(
+            {"source": str(item["source"]), "post_id": str(item["post_id"])},
+            {"$set": item},
+            upsert=True,
         )
-        existing_by_id = {row.post_id: row for row in existing_rows}
-
-        for item in source_posts:
-            existing = existing_by_id.get(str(item["post_id"]))
-            if existing is None:
-                db.add(SocialPost(**item))
-                inserted += 1
-                continue
-
-            existing.author = str(item["author"])
-            existing.context = str(item["context"])
-            existing.text = str(item["text"])
-            existing.coin_symbol = str(item["coin_symbol"])
-            existing.influencer_handle = str(item["influencer_handle"])
-            existing.engagement_score = int(item["engagement_score"])
-            existing.sentiment_compound = float(item["sentiment_compound"])
-            existing.created_at = item["created_at"]
-            updated += 1
-
-    db.commit()
+        for item in posts
+    ]
+    result = db["social_posts"].bulk_write(operations, ordered=False)
+    inserted = int(result.upserted_count)
+    updated = int(max(0, result.matched_count - result.upserted_count))
     return inserted, updated
 
 
@@ -255,8 +234,8 @@ def _export_posts_to_csv(posts: list[dict[str, Any]], output_dir: str) -> str | 
     return str(file_path)
 
 
-async def fetch_and_store_social_data(db: Session, settings: Settings, payload: SocialFetchRequest) -> SocialIngestionResult:
-    tracked_symbols = {symbol for (symbol,) in db.query(Coin.symbol).all()}
+async def fetch_and_store_social_data(db: Database, settings: Settings, payload: SocialFetchRequest) -> SocialIngestionResult:
+    tracked_symbols = {str(item["symbol"]) for item in db["coins"].find({}, {"symbol": 1, "_id": 0})}
     analyzer = SentimentIntensityAnalyzer()
     warnings: list[str] = []
 
@@ -307,8 +286,8 @@ async def fetch_and_store_social_data(db: Session, settings: Settings, payload: 
     return SocialIngestionResult(response=response, posts=combined_posts)
 
 
-def list_social_posts(db: Session, limit: int = 100, source: str | None = None) -> list[SocialPost]:
-    query = db.query(SocialPost)
+def list_social_posts(db: Database, limit: int = 100, source: str | None = None) -> list[dict[str, Any]]:
+    query: dict[str, str] = {}
     if source:
-        query = query.filter(SocialPost.source == source.lower())
-    return query.order_by(SocialPost.created_at.desc()).limit(limit).all()
+        query["source"] = source.lower()
+    return list(db["social_posts"].find(query, {"_id": 0}).sort("created_at", DESCENDING).limit(limit))

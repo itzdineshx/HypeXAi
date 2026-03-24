@@ -5,21 +5,18 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import get_settings
-from app.db.base import Base
 from app.db.init_db import seed_database
-from app.db.session import SessionLocal, engine
+from app.db.session import SessionLocal, ensure_indexes, ping_db
 
 settings = get_settings()
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    ping_db()
     db = SessionLocal()
-    try:
-        seed_database(db)
-    finally:
-        db.close()
+    ensure_indexes(db)
+    seed_database(db)
     yield
 
 

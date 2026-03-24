@@ -5,8 +5,8 @@ This backend provides a complete REST API for the Hype Navigator crypto dashboar
 ## Tech stack
 
 - FastAPI
-- SQLAlchemy 2.x
-- SQLite (default, local file)
+- PyMongo
+- MongoDB
 - Pydantic v2
 
 ## 1) Create virtual environment
@@ -164,13 +164,16 @@ What it does:
 
 - Fetches posts from configured Twitter queries and Reddit subreddits
 - Computes VADER sentiment score (`sentiment_compound`)
-- Stores posts in local DB table `social_posts`
+- Stores posts in MongoDB collection `social_posts`
 - Optionally exports fetched rows to CSV in `SOCIAL_CSV_DIR`
 
 ## Notes
 
-- On first startup, the app auto-creates tables and seeds sample crypto data.
-- Default DB file is `backend/hype_navigator.db`.
+- On first startup, the app creates MongoDB indexes and seeds sample crypto data.
+- Configure MongoDB via environment variables:
+	- `MONGODB_URI` (example: `mongodb+srv://...` or `mongodb://localhost:27017`)
+	- `MONGODB_DB_NAME` (default: `hype_navigator`)
+- On Render, point `MONGODB_URI` to your MongoDB Atlas cluster or managed Mongo instance.
 - CORS is enabled for Vite dev hosts on port 8080.
 - `GET /coins/{symbol}` now enriches coin details with live DexScreener market data.
 - `GET /coins/{symbol}/realtime` returns live DexScreener top pairs, matched token profile data, and market/coin emojis.

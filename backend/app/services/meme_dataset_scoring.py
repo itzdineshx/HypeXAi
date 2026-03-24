@@ -5,9 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy.orm import Session
-
-from app.models.entities import Coin, TrendPoint
+from pymongo.database import Database
 
 
 @dataclass
@@ -172,57 +170,47 @@ def _score_coin(stem: str, rows: list[MarketRow]) -> dict[str, float | int | str
     }
 
 
-def _upsert_coin_and_trends(db: Session, score: dict[str, float | int | str], rows: list[MarketRow]) -> tuple[bool, int]:
+def _upsert_coin_and_trends(db: Database, score: dict[str, float | int | str], rows: list[MarketRow]) -> tuple[bool, int]:
     symbol = str(score["symbol"])
     name = str(score["coin_name"])
 
-    coin = db.query(Coin).filter(Coin.symbol == symbol).first()
-    created = False
-    if coin is None:
-        coin = Coin(
-            symbol=symbol,
-            name=name,
-            price=float(score["latest_price"]),
-            market_cap=float(score["latest_market_cap"]),
-            volume_24h=float(score["latest_volume"]),
-            change_24h=float(score["change_1d_pct"]),
-            hype_score=int(score["hype_score"]),
-            trust_score=int(score["trust_score"]),
-            sentiment_score=int(score["sentiment_score"]),
-            prediction=str(score["prediction"]),
-            prediction_confidence=int(score["prediction_confidence"]),
-            risk_level=str(score["risk_level"]),
-        )
-        db.add(coin)
-        created = True
-    else:
-        coin.name = name
-        coin.price = float(score["latest_price"])
-        coin.market_cap = float(score["latest_market_cap"])
-        coin.volume_24h = float(score["latest_volume"])
-        coin.change_24h = float(score["change_1d_pct"])
-        coin.hype_score = int(score["hype_score"])
-        coin.trust_score = int(score["trust_score"])
-        coin.sentiment_score = int(score["sentiment_score"])
-        coin.prediction = str(score["prediction"])
-        coin.prediction_confidence = int(score["prediction_confidence"])
-        coin.risk_level = str(score["risk_level"])
+    update_result = db["coins"].update_one(
+        {"symbol": symbol},
+        {
+            "$set": {
+                "symbol": symbol,
+                "name": name,
+                "price": float(score["latest_price"]),
+                "market_cap": float(score["latest_market_cap"]),
+                "volume_24h": float(score["latest_volume"]),
+                "change_24h": float(score["change_1d_pct"]),
+                "hype_score": int(score["hype_score"]),
+                "trust_score": int(score["trust_score"]),
+                "sentiment_score": int(score["sentiment_score"]),
+                "prediction": str(score["prediction"]),
+                "prediction_confidence": int(score["prediction_confidence"]),
+                "risk_level": str(score["risk_level"]),
+            }
+        },
+        upsert=True,
+    )
+    created = bool(update_result.upserted_id is not None)
 
-    db.query(TrendPoint).filter(TrendPoint.coin_symbol == symbol).delete()
+    db["trend_points"].delete_many({"coin_symbol": symbol})
 
     recent = rows[-30:] if len(rows) >= 30 else rows
     trend_rows = 0
     for row in recent:
         mention_value = int(round(_clamp(float(score["mentions_proxy"]) * (row.volume / max(1.0, float(score["latest_volume"]))), 5, 999)))
         sentiment_value = int(score["sentiment_score"])
-        db.add(
-            TrendPoint(
-                coin_symbol=symbol,
-                ts=row.date,
-                mentions=mention_value,
-                sentiment=sentiment_value,
-                price=row.close,
-            )
+        db["trend_points"].insert_one(
+            {
+                "coin_symbol": symbol,
+                "ts": row.date,
+                "mentions": mention_value,
+                "sentiment": sentiment_value,
+                "price": row.close,
+            }
         )
         trend_rows += 1
 
@@ -264,7 +252,7 @@ def _write_scores_csv(results: list[dict[str, float | int | str]], export_dir: P
 
 
 def score_meme_coin_dataset(
-    db: Session,
+    db: Database,
     data_dir: str = "data/Meme Coin",
     export_dir: str = "backend/exports/scored",
 ) -> dict[str, object]:
@@ -299,8 +287,6 @@ def score_meme_coin_dataset(
             updated_count += 1
         trend_rows_written += trend_count
         results.append(score)
-
-    db.commit()
 
     csv_path = _write_scores_csv(results, Path(export_dir)) if results else None
 

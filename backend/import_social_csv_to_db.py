@@ -2,10 +2,10 @@ import csv
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import and_
+from pymongo import UpdateOne
+from pymongo.database import Database
 
 from app.db.session import SessionLocal
-from app.models.entities import SocialPost
 
 
 def _parse_datetime(raw: str) -> datetime:
@@ -63,40 +63,21 @@ def _load_rows(csv_path: Path) -> list[dict[str, object]]:
     return rows
 
 
-def _upsert(db: SessionLocal, rows: list[dict[str, object]]) -> tuple[int, int]:
-    inserted = 0
-    updated = 0
-
-    by_source: dict[str, list[dict[str, object]]] = {}
-    for row in rows:
-        by_source.setdefault(str(row["source"]), []).append(row)
-
-    for source, source_rows in by_source.items():
-        ids = [str(item["post_id"]) for item in source_rows]
-        existing = (
-            db.query(SocialPost)
-            .filter(and_(SocialPost.source == source, SocialPost.post_id.in_(ids)))
-            .all()
+def _upsert(db: Database, rows: list[dict[str, object]]) -> tuple[int, int]:
+    operations = [
+        UpdateOne(
+            {"source": str(row["source"]), "post_id": str(row["post_id"])},
+            {"$set": row},
+            upsert=True,
         )
-        existing_map = {item.post_id: item for item in existing}
+        for row in rows
+    ]
+    if not operations:
+        return 0, 0
 
-        for row in source_rows:
-            record = existing_map.get(str(row["post_id"]))
-            if record is None:
-                db.add(SocialPost(**row))
-                inserted += 1
-            else:
-                record.author = str(row["author"])
-                record.context = str(row["context"])
-                record.text = str(row["text"])
-                record.coin_symbol = str(row["coin_symbol"])
-                record.influencer_handle = str(row["influencer_handle"])
-                record.engagement_score = int(row["engagement_score"])
-                record.sentiment_compound = float(row["sentiment_compound"])
-                record.created_at = row["created_at"]  # type: ignore[assignment]
-                updated += 1
-
-    db.commit()
+    result = db["social_posts"].bulk_write(operations, ordered=False)
+    inserted = int(result.upserted_count)
+    updated = int(max(0, result.matched_count - result.upserted_count))
     return inserted, updated
 
 
@@ -116,10 +97,7 @@ def main() -> None:
         return
 
     db = SessionLocal()
-    try:
-        inserted, updated = _upsert(db, rows)
-    finally:
-        db.close()
+    inserted, updated = _upsert(db, rows)
 
     print(f"Rows imported: {len(rows)}")
     print(f"Inserted     : {inserted}")

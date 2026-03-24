@@ -1,17 +1,14 @@
-from app.db.base import Base
 from app.db.init_db import seed_database
-from app.db.session import SessionLocal, engine
+from app.db.session import SessionLocal, ensure_indexes, ping_db
 from app.services.model_training import train_all_models
 
 
 def main() -> None:
-    Base.metadata.create_all(bind=engine)
+    ping_db()
     db = SessionLocal()
-    try:
-        seed_database(db)
-        result = train_all_models(db)
-    finally:
-        db.close()
+    ensure_indexes(db)
+    seed_database(db)
+    result = train_all_models(db)
 
     print("Training complete. Saved artifacts:")
     for model_name, metadata in result.items():

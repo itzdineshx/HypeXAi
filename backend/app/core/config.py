@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     app_name: str = "Hype Navigator API"
     environment: str = "development"
     api_v1_prefix: str = "/api/v1"
-    database_url: str = "sqlite:///./hype_navigator.db"
+    mongodb_uri: str = "mongodb://localhost:27017"
+    mongodb_db_name: str = "hype_navigator"
     cors_origins: Annotated[list[str], NoDecode] = ["http://localhost:8080", "http://127.0.0.1:8080"]
     reddit_client_id: str | None = None
     reddit_client_secret: str | None = None
@@ -61,20 +62,6 @@ class Settings(BaseSettings):
             if raw.startswith("["):
                 return json.loads(raw)
             return [item.strip() for item in raw.split(",") if item.strip()]
-        return value
-
-    @field_validator("database_url", mode="before")
-    @classmethod
-    def normalize_database_url(cls, value: object) -> object:
-        if not isinstance(value, str):
-            return value
-        raw = value.strip()
-        if raw.startswith("sqlite:///"):
-            sqlite_path = raw[len("sqlite:///") :]
-            if sqlite_path.startswith("./") or sqlite_path.startswith("../"):
-                resolved = cls._resolve_backend_path(sqlite_path)
-                normalized = resolved.replace("\\", "/")
-                return f"sqlite:///{normalized}"
         return value
 
     @field_validator("twitter_accounts_db", "social_csv_dir", mode="before")
