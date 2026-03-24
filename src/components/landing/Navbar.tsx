@@ -51,9 +51,6 @@ const Navbar = () => {
         </div>
 
         <div className="flex items-center gap-3">
-          <Button variant="hero-outline" size="sm" asChild className="hidden md:inline-flex">
-            <Link to="/dashboard">Dashboard</Link>
-          </Button>
           <Button variant="hero" size="sm" asChild className="hidden md:inline-flex">
             <Link to="/dashboard">Get Started</Link>
           </Button>
