@@ -1,9 +1,12 @@
 import { useState } from "react";
 import { motion } from "framer-motion";
-import { AlertTriangle, TrendingUp, Zap, ShieldAlert, Bell, BellOff, CheckCircle, XCircle, Filter } from "lucide-react";
+import { AlertTriangle, TrendingUp, Zap, ShieldAlert, Bell, BellRing, CheckCircle, Filter } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, LineChart, Line } from "recharts";
 import DashboardSidebar from "@/components/dashboard/DashboardSidebar";
 import TopBar from "@/components/dashboard/TopBar";
+import { toast } from "@/components/ui/sonner";
+import { isEmailAlertConfigured, sendAlertEmail } from "@/lib/emailAlerts";
 
 const alertHistory = [
   { day: "Mon", critical: 3, warning: 8, info: 12 },
@@ -20,7 +23,16 @@ const riskTrend = [
   { time: "12:00", risk: 78 }, { time: "16:00", risk: 65 }, { time: "20:00", risk: 71 }, { time: "Now", risk: 58 },
 ];
 
-type AlertType = { type: string; icon: any; title: string; coin: string; message: string; time: string; severity: string; status: string };
+type AlertType = {
+  type: string;
+  icon: LucideIcon;
+  title: string;
+  coin: string;
+  message: string;
+  time: string;
+  severity: string;
+  status: string;
+};
 
 const allAlerts: AlertType[] = [
   { type: "danger", icon: AlertTriangle, title: "Pump Detected", coin: "$SHIB", message: "Volume spike of 340% in 2h with coordinated social activity", time: "2 min ago", severity: "critical", status: "active" },
@@ -68,8 +80,34 @@ const Alerts = () => {
   const [timeFilter, setTimeFilter] = useState("24h");
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<string>("all");
+  const [emailSendingIndex, setEmailSendingIndex] = useState<number | null>(null);
 
   const filtered = filter === "all" ? allAlerts : allAlerts.filter(a => a.severity === filter);
+
+  const handleSendEmail = async (alert: AlertType, index: number) => {
+    if (!isEmailAlertConfigured()) {
+      toast.error("EmailJS is not configured. Add VITE_EMAILJS variables in your frontend env file.");
+      return;
+    }
+
+    setEmailSendingIndex(index);
+    try {
+      const response = await sendAlertEmail({
+        title: alert.title,
+        coin: alert.coin,
+        message: alert.message,
+        severity: alert.severity,
+        status: alert.status,
+        time: alert.time,
+      });
+      toast.success(`Alert email sent for ${alert.coin} (${response.status}: ${response.text})`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to send alert email.";
+      toast.error(message);
+    } finally {
+      setEmailSendingIndex(null);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -168,7 +206,17 @@ const Alerts = () => {
                     </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">{a.message}</p>
                   </div>
-                  <span className="text-[10px] text-muted-foreground whitespace-nowrap">{a.time}</span>
+                  <div className="flex flex-col items-end gap-2">
+                    <span className="text-[10px] text-muted-foreground whitespace-nowrap">{a.time}</span>
+                    <button
+                      onClick={() => void handleSendEmail(a, i)}
+                      disabled={emailSendingIndex === i}
+                      className="inline-flex items-center gap-1 rounded-md border border-primary/30 px-2 py-1 text-[10px] font-semibold text-primary hover:bg-primary/10 disabled:opacity-60"
+                    >
+                      <BellRing className="w-3 h-3" />
+                      {emailSendingIndex === i ? "Sending..." : "Trigger Mail"}
+                    </button>
+                  </div>
                 </motion.div>
               ))}
             </div>
