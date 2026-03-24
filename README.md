@@ -1,8 +1,6 @@
 # HypeX AI
 
-<p align="center">
-	<img src="public/hypex_logo.png" alt="HypeX AI Logo" width="120" />
-</p>
+![logo](public/hypex_logo.png)
 
 <p align="center">
 	AI-powered meme coin intelligence platform with real-time market signals, social sentiment ingestion, trust/risk scoring, and replay analytics.
